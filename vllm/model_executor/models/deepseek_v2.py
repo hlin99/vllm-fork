@@ -118,9 +118,9 @@ class DeepseekV2MoE(nn.Module):
                                 reduce_results=False,
                                 renormalize=config.norm_topk_prob,
                                 quant_config=quant_config,
-                                use_grouped_topk=True,
-                                num_expert_group=config.n_group,
-                                topk_group=config.topk_group,
+                                use_grouped_topk=False,
+                                #num_expert_group=config.n_group,
+                                #topk_group=config.topk_group,
                                 prefix=f"{prefix}.experts")
 
         self.gate = ReplicatedLinear(config.hidden_size,
@@ -284,9 +284,15 @@ class DeepseekV2Attention(nn.Module):
         else:
             q = self.q_proj(hidden_states)[0].view(-1, self.num_local_heads,
                                                    self.qk_head_dim)
+        # need reshape from tensor(x0, y0) to tensor(x1) for hpu
+        _batch_size = positions.shape[0]
+        positions = positions.reshape(positions.shape[0] * positions.shape[1])
         q_nope, q_pe = q.split([self.qk_nope_head_dim, self.qk_rope_head_dim],
                                dim=-1)
         latent_cache = self.kv_a_proj_with_mqa(hidden_states)[0]
+        # need reshape from tensor(x0, y0, z0) to tensor(x1, y1) for hpu
+        if len(latent_cache.shape) == 3:
+            latent_cache = latent_cache.reshape(latent_cache.shape[0] * latent_cache.shape[1], latent_cache.shape[2])
         kv_a, _ = latent_cache.split(
             [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
         latent_cache = latent_cache.unsqueeze(1)
@@ -310,7 +316,13 @@ class DeepseekV2Attention(nn.Module):
         v = torch.nn.functional.pad(v, [0, 256 - self.v_head_dim],
                                     value=0).view(-1,
                                                   self.num_local_heads * 256)
+        # need restore from tensor(x0, y0) to tensor(x1, y1, z1) for hpu
+        q = q.reshape(_batch_size, q.shape[0] // _batch_size, q.shape[1])
+        k = k.reshape(_batch_size, k.shape[0] // _batch_size, k.shape[1])
+        v = v.reshape(_batch_size, v.shape[0] // _batch_size, v.shape[1])
         attn_output = self.attn(q, k, v, kv_cache, attn_metadata)
+        # need restore from tensor(x0, y0, z0) to tensor(x1, y1) for hpu
+        attn_output = attn_output.reshape(attn_output.shape[0] * attn_output.shape[1], attn_output.shape[2])
         attn_output = attn_output.view(
             -1, self.num_local_heads, 256)[..., :self.v_head_dim].reshape(
                 -1, self.num_local_heads * self.v_head_dim)
@@ -328,6 +340,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         quant_config: Optional[QuantizationConfig] = None,
     ) -> None:
         super().__init__()
+
         self.hidden_size = config.hidden_size
         rope_theta = getattr(config, "rope_theta", 10000)
         rope_scaling = getattr(config, "rope_scaling", None)
@@ -395,7 +408,9 @@ class DeepseekV2DecoderLayer(nn.Module):
             kv_cache=kv_cache,
             attn_metadata=attn_metadata,
         )
-
+        # need reshape from tensor(x0, y0, z0) to tensor(x1, y1) for hpu
+        if len(residual.shape) == 3:
+            residual = residual.reshape(residual.shape[0] * residual.shape[1], residual.shape[2])
         # Fully Connected
         hidden_states, residual = self.post_attention_layernorm(
             hidden_states, residual)
