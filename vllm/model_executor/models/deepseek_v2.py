@@ -83,9 +83,11 @@ class DeepseekV2MLP(nn.Module):
         self.act_fn = SiluAndMul()
 
     def forward(self, x):
+        print(" DeepseekV2MLP +++")
         gate_up, _ = self.gate_up_proj(x)
         x = self.act_fn(gate_up)
         x, _ = self.down_proj(x)
+        print(" DeepseekV2MLP ---")
         return x
 
 
@@ -140,6 +142,7 @@ class DeepseekV2MoE(nn.Module):
             )
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        print(" DeepseekV2MoE +++ ")
         num_tokens, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
         if self.n_shared_experts is not None:
@@ -154,7 +157,7 @@ class DeepseekV2MoE(nn.Module):
         if self.tp_size > 1:
             final_hidden_states = tensor_model_parallel_all_reduce(
                 final_hidden_states)
-
+        print(" DeepseekV2MoE ---- ")
         return final_hidden_states.view(num_tokens, hidden_dim)
 
 
@@ -276,6 +279,7 @@ class DeepseekV2Attention(nn.Module):
         kv_cache: torch.Tensor,
         attn_metadata: AttentionMetadata,
     ) -> torch.Tensor:
+        print(" DeepseekV2Attention +++")
         if self.q_lora_rank is not None:
             q = self.q_a_proj(hidden_states)[0]
             q = self.q_a_layernorm(q)
@@ -327,6 +331,7 @@ class DeepseekV2Attention(nn.Module):
             -1, self.num_local_heads, 256)[..., :self.v_head_dim].reshape(
                 -1, self.num_local_heads * self.v_head_dim)
         output, _ = self.o_proj(attn_output)
+        print("DeepseekV2Attention ---")
         return output
 
 
@@ -395,6 +400,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         attn_metadata: AttentionMetadata,
         residual: Optional[torch.Tensor],
     ) -> torch.Tensor:
+        print("DeepseekV2DecoderLayer +++")
         # Self Attention
         if residual is None:
             residual = hidden_states
@@ -415,6 +421,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         hidden_states, residual = self.post_attention_layernorm(
             hidden_states, residual)
         hidden_states = self.mlp(hidden_states)
+        print("DeepseekV2DecoderLayer ---")
         return hidden_states, residual
 
 
@@ -467,6 +474,7 @@ class DeepseekV2Model(nn.Module):
         attn_metadata: AttentionMetadata,
         intermediate_tensors: Optional[IntermediateTensors],
     ) -> Union[torch.Tensor, IntermediateTensors]:
+        print(" DeepseekV2Model +++")
         if get_pp_group().is_first_rank:
             hidden_states = self.embed_tokens(input_ids)
             residual = None
@@ -488,6 +496,7 @@ class DeepseekV2Model(nn.Module):
             })
 
         hidden_states, _ = self.norm(hidden_states, residual)
+        print("DeepseekV2Model --- ")
         return hidden_states
 
 
